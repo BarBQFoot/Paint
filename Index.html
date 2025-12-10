@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Magic Paint: ระบบสองมือ</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Face-API.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+    
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            background-color: #0f172a;
+            color: white;
+            overflow: hidden;
+            touch-action: none;
+        }
+        
+        #canvas-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            border-radius: 1.5rem;
+            overflow: hidden;
+            box-shadow: 0 0 50px rgba(124, 58, 237, 0.4);
+            background: #000;
+            aspect-ratio: 4/3;
+        }
+
+        #video_input {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            display: block;
+        }
+
+        #drawing_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+            z-index: 10;
+        }
+
+        #ui_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            pointer-events: none;
+        }
+
+        .color-btn {
+            transition: all 0.2s;
+            border: 3px solid transparent;
+        }
+        .color-btn:hover, .color-btn.active {
+            transform: scale(1.2);
+            border-color: white;
+            box-shadow: 0 0 15px currentColor;
+        }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Tool Indicator Animation */
+        @keyframes popIn {
+            0% { transform: scale(0); opacity: 0; }
+            70% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .tool-icon {
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col items-center justify-center py-4 bg-[url('https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center">
+    <div class="absolute inset-0 bg-slate-900/90"></div>
+
+    <!-- Header -->
+    <div class="relative z-30 text-center mb-4">
+        <h1 class="text-3xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-violet-400 drop-shadow-lg">
+            Magic AI Paint: Dual Hand
+        </h1>
+        <div class="flex justify-center gap-6 text-xs md:text-sm text-gray-300 mt-2">
+            <span class="flex items-center gap-1">👉 <span class="text-pink-300">มือขวา</span>: วาดรูป</span>
+            <span class="flex items-center gap-1">🖐 <span class="text-blue-300">มือซ้าย (แบ)</span>: หยุด</span>
+            <span class="flex items-center gap-1">✊ <span class="text-red-300">มือซ้าย (กำ)</span>: ยางลบ</span>
+        </div>
+    </div>
+
+    <!-- Main Display -->
+    <div id="canvas-wrapper" class="relative z-30">
+        <!-- Loader -->
+        <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-50 transition-opacity duration-500">
+            <div class="w-16 h-16 border-4 border-violet-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p class="text-violet-300 animate-pulse">กำลังเตรียมระบบสองมือ...</p>
+        </div>
+
+        <video id="video_input" autoplay playsinline></video>
+        <canvas id="drawing_canvas"></canvas>
+        <canvas id="ui_canvas"></canvas>
+    </div>
+
+    <!-- Controls -->
+    <div class="relative z-30 mt-6 flex flex-col items-center gap-4">
+        <!-- Color Palette -->
+        <div class="glass-panel p-3 rounded-full flex gap-3 shadow-2xl">
+            <button onclick="setColor('#ff0055')" class="color-btn active w-10 h-10 rounded-full bg-[#ff0055]" style="color: #ff0055"></button>
+            <button onclick="setColor('#fbbf24')" class="color-btn w-10 h-10 rounded-full bg-[#fbbf24]" style="color: #fbbf24"></button>
+            <button onclick="setColor('#4ade80')" class="color-btn w-10 h-10 rounded-full bg-[#4ade80]" style="color: #4ade80"></button>
+            <button onclick="setColor('#3b82f6')" class="color-btn w-10 h-10 rounded-full bg-[#3b82f6]" style="color: #3b82f6"></button>
+            <button onclick="setColor('#a855f7')" class="color-btn w-10 h-10 rounded-full bg-[#a855f7]" style="color: #a855f7"></button>
+            <div class="w-px h-10 bg-gray-600 mx-1"></div>
+            <button onclick="clearCanvas()" class="px-4 py-2 rounded-full bg-slate-700 hover:bg-red-500 transition text-sm font-semibold flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                ลบกระดาน
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('video_input');
+        const drawingCanvas = document.getElementById('drawing_canvas');
+        const uiCanvas = document.getElementById('ui_canvas');
+        const drawingCtx = drawingCanvas.getContext('2d');
+        const uiCtx = uiCanvas.getContext('2d');
+        const loadingScreen = document.getElementById('loading');
+        
+        // --- State ---
+        let currentColor = '#ff0055';
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let emotionModelLoaded = false;
+        
+        // Tool States
+        let currentMode = 'brush'; // 'brush', 'eraser', 'pause'
+        let leftHandStatus = 'none'; // 'open', 'fist', 'none'
+        
+        // --- Configuration ---
+        const LINE_WIDTH = 8;
+        const ERASER_WIDTH = 40;
+        drawingCtx.lineCap = 'round';
+        drawingCtx.lineJoin = 'round';
+
+        const emotionMap = {
+            neutral: { text: 'เฉยๆ', emoji: '😐' },
+            happy: { text: 'ลั้นลา', emoji: '😄' },
+            sad: { text: 'เศร้า', emoji: '😢' },
+            angry: { text: 'โกรธ', emoji: '😠' },
+            fearful: { text: 'กลัว', emoji: '😱' },
+            disgusted: { text: 'อี๋', emoji: '🤢' },
+            surprised: { text: 'ว้าว', emoji: '😲' }
+        };
+
+        // --- 1. Setup MediaPipe Hands ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2, // เปิดรับ 2 มือ
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onHandResults);
+
+        // ฟังก์ชันนับนิ้วที่ชูขึ้น (สำหรับมือซ้าย)
+        function countFingers(landmarks) {
+            let count = 0;
+            // Tips ids: 4 (thumb), 8, 12, 16, 20
+            // PIP ids: 2, 6, 10, 14, 18 (Joints below tips)
+            
+            // 4 Fingers (Index, Middle, Ring, Pinky)
+            const fingerTips = [8, 12, 16, 20];
+            const fingerPips = [6, 10, 14, 18];
+            
+            for(let i=0; i<4; i++) {
+                // Check if tip is higher than pip (y value is smaller)
+                if (landmarks[fingerTips[i]].y < landmarks[fingerPips[i]].y) {
+                    count++;
+                }
+            }
+            
+            // Thumb (Logic varies based on hand side, simplified here using x distance)
+            // But for simple Fist/Open palm, just 4 fingers is usually enough indicator
+            return count;
+        }
+
+        function onHandResults(results) {
+            // Resize logic
+            if (drawingCanvas.width !== videoElement.videoWidth) {
+                drawingCanvas.width = videoElement.videoWidth;
+                drawingCanvas.height = videoElement.videoHeight;
+                uiCanvas.width = videoElement.videoWidth;
+                uiCanvas.height = videoElement.videoHeight;
+            }
+
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+
+            // Default State
+            let rightHandLandmarks = null;
+            let leftHandDetected = false;
+
+            // Process Hands
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    const label = results.multiHandedness[i].label; // 'Left' or 'Right'
+                    
+                    if (label === 'Right') {
+                        rightHandLandmarks = landmarks;
+                    } else if (label === 'Left') {
+                        leftHandDetected = true;
+                        const fingersUp = countFingers(landmarks);
+                        
+                        // Logic: Open Palm (>=4 fingers) vs Fist (<=1 finger)
+                        if (fingersUp >= 4) {
+                            currentMode = 'pause';
+                            leftHandStatus = 'open';
+                        } else if (fingersUp <= 1) {
+                            currentMode = 'eraser';
+                            leftHandStatus = 'fist';
+                        } else {
+                            currentMode = 'brush'; // Default if hand is just moving around
+                            leftHandStatus = 'pointing';
+                        }
+                    }
+                }
+            }
+
+            // Fallback: If no left hand detected, default to brush
+            if (!leftHandDetected) {
+                currentMode = 'brush';
+                leftHandStatus = 'none';
+            }
+
+            // --- DRAWING LOGIC (Right Hand) ---
+            if (rightHandLandmarks) {
+                const indexTip = rightHandLandmarks[8];
+                const x = indexTip.x * drawingCanvas.width;
+                const y = indexTip.y * drawingCanvas.height;
+
+                if (currentMode === 'pause') {
+                    // Stop Drawing: Just update position but don't stroke
+                    isDrawing = false;
+                } else {
+                    // Brush or Eraser
+                    if (currentMode === 'eraser') {
+                        drawingCtx.globalCompositeOperation = 'destination-out'; // Erase mode
+                        drawingCtx.lineWidth = ERASER_WIDTH;
+                    } else {
+                        drawingCtx.globalCompositeOperation = 'source-over'; // Draw mode
+                        drawingCtx.strokeStyle = currentColor;
+                        drawingCtx.lineWidth = LINE_WIDTH;
+                    }
+
+                    if (isDrawing) {
+                        drawingCtx.beginPath();
+                        drawingCtx.moveTo(lastX, lastY);
+                        drawingCtx.lineTo(x, y);
+                        drawingCtx.stroke();
+                    }
+                    isDrawing = true;
+                }
+                
+                lastX = x;
+                lastY = y;
+
+                // --- UI: Right Hand Cursor ---
+                const mirroredX = uiCanvas.width - x;
+                uiCtx.beginPath();
+                
+                if (currentMode === 'eraser') {
+                    // Eraser Cursor (Outline Circle)
+                    uiCtx.arc(mirroredX, y, 20, 0, 2 * Math.PI);
+                    uiCtx.strokeStyle = 'white';
+                    uiCtx.lineWidth = 2;
+                    uiCtx.stroke();
+                    uiCtx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                    uiCtx.fill();
+                } else if (currentMode === 'pause') {
+                    // Pause Cursor (X)
+                    uiCtx.arc(mirroredX, y, 10, 0, 2 * Math.PI);
+                    uiCtx.fillStyle = 'red';
+                    uiCtx.fill();
+                } else {
+                    // Brush Cursor (Filled Color)
+                    uiCtx.arc(mirroredX, y, 10, 0, 2 * Math.PI);
+                    uiCtx.fillStyle = currentColor;
+                    uiCtx.fill();
+                    uiCtx.strokeStyle = 'white';
+                    uiCtx.lineWidth = 3;
+                    uiCtx.stroke();
+                }
+            } else {
+                isDrawing = false;
+            }
+
+            // --- UI: Status Indicators ---
+            drawStatusUI();
+            
+            // --- UI: Face Emotion ---
+            if (currentEmotion && currentFaceBox) {
+                drawEmotionUI();
+            }
+        }
+
+        function drawStatusUI() {
+            // Display Current Mode at top center
+            let text = "";
+            let icon = "";
+            let color = "";
+
+            if (currentMode === 'brush') {
+                text = "โหมดวาดเขียน";
+                icon = "🖌️";
+                color = currentColor;
+            } else if (currentMode === 'eraser') {
+                text = "โหมดยางลบ";
+                icon = "🧼";
+                color = "#ef4444"; // red-500
+            } else if (currentMode === 'pause') {
+                text = "หยุดวาด";
+                icon = "✋";
+                color = "#3b82f6"; // blue-500
+            }
+
+            // Draw status pill
+            uiCtx.font = "bold 20px Kanit";
+            const pillWidth = 200;
+            const pillHeight = 50;
+            const pillX = (uiCanvas.width / 2) - (pillWidth / 2);
+            const pillY = 20;
+
+            uiCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            uiCtx.beginPath();
+            uiCtx.roundRect(pillX, pillY, pillWidth, pillHeight, 25);
+            uiCtx.fill();
+
+            // Status Icon & Text
+            uiCtx.fillStyle = color;
+            uiCtx.fillText(icon, pillX + 20, pillY + 32);
+            uiCtx.fillStyle = "white";
+            uiCtx.fillText(text, pillX + 60, pillY + 32);
+
+            // Draw Left Hand Hint (If detected)
+            if (leftHandStatus !== 'none') {
+                uiCtx.font = "16px Kanit";
+                uiCtx.fillStyle = "rgba(255,255,255,0.8)";
+                uiCtx.fillText("ตรวจพบมือซ้าย ✅", 20, uiCanvas.height - 30);
+            }
+        }
+
+        // ... (Face Emotion Logic remains same as previous version) ...
+        async function loadFaceModel() {
+            try {
+                const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL);
+                emotionModelLoaded = true;
+            } catch (e) { console.error(e); }
+        }
+
+        let currentEmotion = null;
+        let currentFaceBox = null;
+
+        async function detectEmotion() {
+            const detections = await faceapi.detectAllFaces(videoElement, new faceapi.TinyFaceDetectorOptions()).withFaceExpressions();
+            if (detections && detections.length > 0) {
+                const expressions = detections[0].expressions;
+                const maxExpression = Object.keys(expressions).reduce((a, b) => expressions[a] > expressions[b] ? a : b);
+                currentEmotion = emotionMap[maxExpression];
+                currentFaceBox = detections[0].detection.box;
+            } else {
+                currentEmotion = null;
+                currentFaceBox = null;
+            }
+        }
+
+        function drawEmotionUI() {
+            const mirroredBoxX = uiCanvas.width - currentFaceBox.x - currentFaceBox.width;
+            uiCtx.font = "bold 24px Kanit";
+            const text = `${currentEmotion.emoji} ${currentEmotion.text}`;
+            const textWidth = uiCtx.measureText(text).width + 30;
+            const x = mirroredBoxX + (currentFaceBox.width / 2) - (textWidth / 2);
+            const y = currentFaceBox.y - 20;
+
+            uiCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            uiCtx.beginPath();
+            uiCtx.roundRect(x, y, textWidth, 40, 20);
+            uiCtx.fill();
+
+            uiCtx.fillStyle = '#000';
+            uiCtx.fillText(text, x + 15, y + 28);
+        }
+
+        async function startCamera() {
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                    if (emotionModelLoaded && !videoElement.paused) detectEmotion();
+                },
+                width: 1280,
+                height: 720
+            });
+            camera.start();
+            loadingScreen.style.opacity = '0';
+            setTimeout(() => loadingScreen.style.display = 'none', 500);
+        }
+
+        function setColor(color) {
+            currentColor = color;
+            document.querySelectorAll('.color-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if(btn.getAttribute('style').includes(color)) btn.classList.add('active');
+            });
+        }
+
+        function clearCanvas() {
+            drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+        }
+
+        (async () => {
+            await loadFaceModel();
+            await startCamera();
+        })();
+
+    </script>
+</body>
+</html>
+
+
